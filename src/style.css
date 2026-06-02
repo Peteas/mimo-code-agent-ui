@@ -33,11 +33,23 @@
   }
 }
 
-/* Scrollbar */
+/* Scrollbar - cross browser */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 transparent;
+}
+.dark * {
+  scrollbar-color: #475569 transparent;
+}
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: #94a3b8; border-radius: 3px; }
 .dark ::-webkit-scrollbar-thumb { background: #475569; }
 
-/* Code block styles */
-pre code.hljs { padding: 0 !important; }
+/* Code block styles - scoped to markdown-body */
+.markdown-body pre code.hljs { padding: 0 !important; }
+
+/* Reusable form input class */
+.form-input {
+  @apply w-full px-3 py-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] text-[var(--color-text)] text-sm focus:outline-none focus:border-[var(--color-primary)];
+}

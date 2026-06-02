@@ -4,6 +4,7 @@ import { streamChat, type SSEEvent } from '../api/chat'
 import { getSessions, deleteSession, getMessages } from '../api/session'
 
 export interface DisplayMessage {
+  id: string
   role: 'user' | 'assistant' | 'system' | 'tool'
   content: string
   toolCalls?: Array<{ id: string; name: string; arguments: string }>
@@ -17,33 +18,54 @@ export const useChatStore = defineStore('chat', () => {
   const messages = ref<DisplayMessage[]>([])
   const isStreaming = ref(false)
   const showAuthModal = ref(false)
+  const isLoadingSessions = ref(false)
+  const isLoadingMessages = ref(false)
+  const error = ref('')
 
   let abortController: AbortController | null = null
 
+  function createMessage(role: DisplayMessage['role'], content: string, extras?: Partial<DisplayMessage>): DisplayMessage {
+    return {
+      id: crypto.randomUUID(),
+      role,
+      content,
+      ...extras,
+    }
+  }
+
   async function loadSessions() {
+    isLoadingSessions.value = true
+    error.value = ''
     try {
       const res = await getSessions()
       if (res.code === 0) {
         sessions.value = res.data || []
       }
-    } catch {
-      // Silent fail
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to load sessions'
+      console.error('loadSessions failed:', e)
+    } finally {
+      isLoadingSessions.value = false
     }
   }
 
   async function loadMessages(sessionId: string) {
     currentSessionId.value = sessionId
+    isLoadingMessages.value = true
+    error.value = ''
     try {
       const res = await getMessages(sessionId)
       if (res.code === 0) {
-        messages.value = (res.data || []).map((m) => ({
-          role: m.role,
-          content: m.content,
-          toolCalls: m.toolCalls,
-        }))
+        messages.value = (res.data || []).map((m) =>
+          createMessage(m.role, m.content, { toolCalls: m.toolCalls })
+        )
       }
-    } catch {
+    } catch (e) {
       messages.value = []
+      error.value = e instanceof Error ? e.message : 'Failed to load messages'
+      console.error('loadMessages failed:', e)
+    } finally {
+      isLoadingMessages.value = false
     }
   }
 
@@ -55,14 +77,16 @@ export const useChatStore = defineStore('chat', () => {
         currentSessionId.value = ''
         messages.value = []
       }
-    } catch {
-      // Silent fail
+    } catch (e) {
+      error.value = e instanceof Error ? e.message : 'Failed to delete session'
+      console.error('removeSession failed:', e)
     }
   }
 
   function newSession() {
     currentSessionId.value = ''
     messages.value = []
+    error.value = ''
   }
 
   async function sendMessage(content: string, regenerate = false) {
@@ -75,17 +99,20 @@ export const useChatStore = defineStore('chat', () => {
     }
 
     if (!regenerate) {
-      messages.value.push({ role: 'user', content })
+      messages.value.push(createMessage('user', content))
     }
 
     isStreaming.value = true
+    error.value = ''
     abortController = new AbortController()
 
     // Add placeholder for assistant response
-    const assistantIndex = messages.value.length
-    messages.value.push({ role: 'assistant', content: '', isStreaming: true })
+    const assistantMsg = createMessage('assistant', '', { isStreaming: true })
+    messages.value.push(assistantMsg)
+    const assistantIndex = messages.value.length - 1
 
     let accumulated = ''
+    let sessionsNeedRefresh = true
 
     await streamChat({
       message: content,
@@ -102,24 +129,15 @@ export const useChatStore = defineStore('chat', () => {
             }
             break
           case 'TOOL_CALL':
-            messages.value.push({
-              role: 'system',
-              content: `Calling tool: ${event.toolName}\n${event.content}`,
-              toolName: event.toolName,
-            })
+            messages.value.push(createMessage('system', `Calling tool: ${event.toolName}\n${event.content}`, { toolName: event.toolName }))
             break
           case 'TOOL_RESULT':
-            messages.value.push({
-              role: 'tool',
-              content: event.content,
-              toolName: event.toolName,
-            })
+            messages.value.push(createMessage('tool', event.content, { toolName: event.toolName }))
             break
           case 'THINKING':
-            // Could add thinking indicator
             break
           case 'ERROR':
-            messages.value.push({ role: 'system', content: event.content })
+            messages.value.push(createMessage('system', event.content))
             break
         }
       },
@@ -129,16 +147,20 @@ export const useChatStore = defineStore('chat', () => {
           isStreaming: false,
         }
         isStreaming.value = false
-        // Refresh sessions list
-        loadSessions()
+        // Only refresh sessions if this was a new session
+        if (sessionsNeedRefresh) {
+          loadSessions()
+          sessionsNeedRefresh = false
+        }
       },
-      onError(error: string) {
+      onError(err: string) {
         messages.value[assistantIndex] = {
           ...messages.value[assistantIndex],
-          content: accumulated || `Error: ${error}`,
+          content: accumulated || `Error: ${err}`,
           isStreaming: false,
         }
         isStreaming.value = false
+        error.value = err
       },
     })
   }
@@ -153,7 +175,6 @@ export const useChatStore = defineStore('chat', () => {
     if (lastAssistantIdx >= 0 && messages.value[lastAssistantIdx].role === 'assistant') {
       messages.value.splice(lastAssistantIdx, 1)
     }
-    // Find the last user message
     const lastUserMsg = [...messages.value].reverse().find((m) => m.role === 'user')
     if (lastUserMsg) {
       sendMessage(lastUserMsg.content, true)
@@ -166,6 +187,9 @@ export const useChatStore = defineStore('chat', () => {
     messages,
     isStreaming,
     showAuthModal,
+    isLoadingSessions,
+    isLoadingMessages,
+    error,
     loadSessions,
     loadMessages,
     removeSession,

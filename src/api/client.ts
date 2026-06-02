@@ -24,6 +24,13 @@ function processQueue(error: unknown, token: string | null) {
   failedQueue = []
 }
 
+function clearAuthAndNotify() {
+  sessionStorage.removeItem('accessToken')
+  sessionStorage.removeItem('refreshToken')
+  // Dispatch a custom event so the auth store can react
+  window.dispatchEvent(new CustomEvent('auth:expired'))
+}
+
 // Request interceptor: attach access token
 client.interceptors.request.use((config) => {
   const token = sessionStorage.getItem('accessToken')
@@ -37,7 +44,7 @@ client.interceptors.request.use((config) => {
 client.interceptors.response.use(
   (response) => response,
   async (error) => {
-    const originalRequest = error.config
+    const originalRequest = error.config as typeof error.config & { _retry?: boolean }
 
     if (error.response?.status === 401 && !originalRequest._retry) {
       if (isRefreshing) {
@@ -55,9 +62,7 @@ client.interceptors.response.use(
       const refreshToken = sessionStorage.getItem('refreshToken')
       if (!refreshToken) {
         isRefreshing = false
-        sessionStorage.removeItem('accessToken')
-        sessionStorage.removeItem('refreshToken')
-        window.location.reload()
+        clearAuthAndNotify()
         return Promise.reject(error)
       }
 
@@ -76,9 +81,7 @@ client.interceptors.response.use(
         return client(originalRequest)
       } catch (refreshError) {
         processQueue(refreshError, null)
-        sessionStorage.removeItem('accessToken')
-        sessionStorage.removeItem('refreshToken')
-        window.location.reload()
+        clearAuthAndNotify()
         return Promise.reject(refreshError)
       } finally {
         isRefreshing = false

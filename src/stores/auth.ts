@@ -10,6 +10,13 @@ export const useAuthStore = defineStore('auth', () => {
 
   const isLoggedIn = computed(() => !!accessToken.value)
 
+  // Listen for auth:expired events from axios interceptor
+  if (typeof window !== 'undefined') {
+    window.addEventListener('auth:expired', () => {
+      logout()
+    })
+  }
+
   async function login(user: string, password: string) {
     const res = await apiLogin(user, password)
     if (res.code === 0 && res.data) {

@@ -17,20 +17,28 @@ export interface ChatOptions {
   signal?: AbortSignal
 }
 
+function getAccessToken(): string {
+  return sessionStorage.getItem('accessToken') || ''
+}
+
 export async function streamChat(options: ChatOptions): Promise<void> {
   const { message, sessionId, regenerate, onEvent, onDone, onError, signal } = options
-  const token = sessionStorage.getItem('accessToken')
 
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        Authorization: `Bearer ${getAccessToken()}`,
       },
       body: JSON.stringify({ message, sessionId, regenerate }),
       signal,
     })
+
+    if (response.status === 401) {
+      onError('Session expired. Please log in again.')
+      return
+    }
 
     if (!response.ok) {
       const errorText = await response.text()
